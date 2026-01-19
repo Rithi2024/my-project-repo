@@ -24,6 +24,8 @@ app.use("/api/products", productRoutes);
 app.get("/", (req, res) => res.send("Backend is working"));
 
 app.use("/images", express.static(path.join(__dirname, "..", "upload", "images")));
+const uploadRoutes = require("./routes/upload.routes");
+app.use("/api/uploads", uploadRoutes);
 
 
 module.exports = app;
