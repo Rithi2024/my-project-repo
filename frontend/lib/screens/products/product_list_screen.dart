@@ -612,13 +612,14 @@ class _ProductRow extends StatelessWidget {
                     onPressed: onEdit,
                   ),
                   IconButton(
+                    tooltip: 'Delete',
                     padding: EdgeInsets.zero,
                     constraints: const BoxConstraints.tightFor(
                       width: 32,
                       height: 32,
                     ),
                     visualDensity: VisualDensity.compact,
-                    icon: const Icon(Icons.delete, size: 18),
+                    icon: const Icon(Icons.delete, size: 18, color: Colors.red),
                     onPressed: onDelete,
                   ),
                 ],

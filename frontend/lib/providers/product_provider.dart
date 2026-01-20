@@ -277,4 +277,19 @@ class ProductProvider extends ChangeNotifier {
     order = dir;
     fetch(resetPage: true);
   }
+
+  void reset() {
+    items = [];
+    isLoading = false;
+    error = null;
+
+    page = 1;
+    total = 0;
+    search = '';
+    categoryId = null;
+    sortBy = 'name';
+    order = 'asc';
+
+    notifyListeners();
+  }
 }

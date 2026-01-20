@@ -2,33 +2,27 @@ import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
 
 import 'core/api/api_client.dart';
+import 'core/constants.dart';
 import 'providers/auth_provider.dart';
 import 'providers/category_provider.dart';
 import 'providers/product_provider.dart';
-
 import 'screens/auth/login_screen.dart';
 import 'screens/home/home_shell.dart';
-import 'core/constants.dart';
 
-void main() {
-  runApp(const MyApp());
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+
+  final api = ApiClient(baseUrl: API_BASE_URL);
+
+  // ✅ IMPORTANT: load token into ApiClient memory before any request
+  await api.initTokenFromStorage();
+
+  runApp(MyApp(api: api));
 }
 
-class MyApp extends StatefulWidget {
-  const MyApp({super.key});
-  @override
-  State<MyApp> createState() => _MyAppState();
-}
-
-class _MyAppState extends State<MyApp> {
-  late final ApiClient api;
-
-  @override
-  void initState() {
-    super.initState();
-
-    api = ApiClient(baseUrl: API_BASE_URL);
-  }
+class MyApp extends StatelessWidget {
+  const MyApp({super.key, required this.api});
+  final ApiClient api;
 
   @override
   Widget build(BuildContext context) {
@@ -41,7 +35,19 @@ class _MyAppState extends State<MyApp> {
       child: MaterialApp(
         debugShowCheckedModeBanner: false,
         title: 'Flutter CRUD',
-        theme: ThemeData(useMaterial3: true),
+        theme: ThemeData(
+          useMaterial3: true,
+          fontFamily: 'Khmer',
+          textTheme: const TextTheme(
+            bodyMedium: TextStyle(height: 1.35),
+            bodyLarge: TextStyle(height: 1.35),
+            titleMedium: TextStyle(height: 1.35),
+          ),
+        ),
+        routes: {
+          '/login': (_) => const LoginScreen(),
+          '/home': (_) => const HomeShell(),
+        },
         home: const _Gate(),
       ),
     );
@@ -54,7 +60,6 @@ class _Gate extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final auth = context.watch<AuthProvider>();
-    if (auth.isLoggedIn) return const HomeShell();
-    return const LoginScreen();
+    return auth.isLoggedIn ? const HomeShell() : const LoginScreen();
   }
 }

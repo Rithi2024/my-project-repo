@@ -1,4 +1,6 @@
 import 'package:flutter/material.dart';
+import 'package:frontend/providers/category_provider.dart';
+import 'package:frontend/providers/product_provider.dart';
 import 'package:provider/provider.dart';
 import '../../providers/auth_provider.dart';
 import '../categories/category_screen.dart';
@@ -24,10 +26,26 @@ class _HomeShellState extends State<HomeShell> {
           IconButton(
             tooltip: 'Logout',
             icon: const Icon(Icons.logout),
-            onPressed: () => context.read<AuthProvider>().logout(),
+            onPressed: () async {
+              // capture context-safe references BEFORE awaiting (best practice)
+              final auth = context.read<AuthProvider>();
+              final cat = context.read<CategoryProvider>();
+              final prod = context.read<ProductProvider>();
+
+              await auth.logout();
+              if (!context.mounted) return;
+
+              cat.reset();
+              prod.reset();
+
+              Navigator.of(
+                context,
+              ).pushNamedAndRemoveUntil('/login', (_) => false);
+            },
           ),
         ],
       ),
+
       body: pages[index],
       bottomNavigationBar: BottomNavigationBar(
         currentIndex: index,

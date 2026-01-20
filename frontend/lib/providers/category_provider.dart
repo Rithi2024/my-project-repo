@@ -172,4 +172,15 @@ class CategoryProvider extends ChangeNotifier {
         ? text.replaceFirst(RegExp(r'^ApiException\(\d+\):\s*'), '')
         : text;
   }
+
+  void reset() {
+    _items.clear(); // NOT items.clear()
+    isLoading = false;
+    error = null;
+    _lastSearch = '';
+    _page = 1;
+    total = 0;
+    totalPages = 1;
+    notifyListeners();
+  }
 }

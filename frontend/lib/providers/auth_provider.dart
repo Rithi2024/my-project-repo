@@ -16,10 +16,22 @@ class AuthProvider extends ChangeNotifier {
   String? token;
   User? user;
 
+  bool _initialized = false;
+
   Future<void> init() async {
+    if (_initialized) return;
+    _initialized = true;
+
+    // 1) load from storage into provider
     token = await _tokenStorage.getToken();
+
+    // 2) IMPORTANT: sync ApiClient in-memory token
+    await _api.setToken(token);
+
     notifyListeners();
   }
+
+  bool get isLoggedIn => token != null && token!.isNotEmpty;
 
   Future<bool> login({required String email, required String password}) async {
     isLoading = true;
@@ -37,7 +49,12 @@ class AuthProvider extends ChangeNotifier {
       if (t.isEmpty) throw ApiException('Token missing from response');
 
       token = t;
-      await _tokenStorage.saveToken(t);
+
+      // ✅ IMPORTANT: set token into ApiClient (memory + storage)
+      await _api.setToken(t);
+
+      // optional: keeping this is OK but redundant because _api.setToken already saves
+      // await _tokenStorage.saveToken(t);
 
       if (res['user'] is Map<String, dynamic>) {
         user = User.fromJson(res['user']);
@@ -128,11 +145,15 @@ class AuthProvider extends ChangeNotifier {
   }
 
   Future<void> logout() async {
-    await _tokenStorage.clearToken();
+    // ✅ IMPORTANT: clear ApiClient in-memory token (and storage)
+    await _api.setToken(null);
+
+    // optional: redundant because setToken(null) already clears
+    // await _tokenStorage.clearToken();
+
     token = null;
     user = null;
+    error = null;
     notifyListeners();
   }
-
-  bool get isLoggedIn => token != null && token!.isNotEmpty;
 }

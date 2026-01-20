@@ -1,11 +1,14 @@
 import 'package:flutter/material.dart';
 import 'package:provider/provider.dart';
+
 import '../../core/utils/debouncer.dart';
+import '../../models/category.dart';
 import '../../providers/category_provider.dart';
 import '../../widgets/loading.dart';
 
 class CategoryScreen extends StatefulWidget {
   const CategoryScreen({super.key});
+
   @override
   State<CategoryScreen> createState() => _CategoryScreenState();
 }
@@ -17,7 +20,9 @@ class _CategoryScreenState extends State<CategoryScreen> {
   @override
   void initState() {
     super.initState();
-    Future.microtask(() => context.read<CategoryProvider>().fetch());
+    Future.microtask(
+      () => context.read<CategoryProvider>().fetch(resetPage: true),
+    );
   }
 
   @override
@@ -27,14 +32,49 @@ class _CategoryScreenState extends State<CategoryScreen> {
     super.dispose();
   }
 
-  Future<void> _openDialog({int? id, String? name, String? desc}) async {
-    final nameCtrl = TextEditingController(text: name ?? '');
-    final descCtrl = TextEditingController(text: desc ?? '');
+  Future<void> _confirmDeleteCategory(Category c) async {
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (ctx) => AlertDialog(
+        title: const Text('Delete category?'),
+        content: Text('Are you sure you want to delete "${c.name}"?'),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(ctx, false),
+            child: const Text('Cancel'),
+          ),
+          ElevatedButton(
+            style: ElevatedButton.styleFrom(backgroundColor: Colors.red),
+            onPressed: () => Navigator.pop(ctx, true),
+            child: const Text('Delete'),
+          ),
+        ],
+      ),
+    );
+
+    if (confirmed != true) return;
+
+    final ok = await context.read<CategoryProvider>().remove(c.id);
+    if (!mounted) return;
+
+    if (!ok) {
+      final err = context.read<CategoryProvider>().error ?? 'Delete failed';
+      ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(err)));
+    } else {
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('Category deleted')));
+    }
+  }
+
+  Future<void> _openDialog({Category? existing}) async {
+    final nameCtrl = TextEditingController(text: existing?.name ?? '');
+    final descCtrl = TextEditingController(text: existing?.description ?? '');
 
     await showDialog(
       context: context,
-      builder: (_) => AlertDialog(
-        title: Text(id == null ? 'Create Category' : 'Edit Category'),
+      builder: (ctx) => AlertDialog(
+        title: Text(existing == null ? 'Create Category' : 'Edit Category'),
         content: SizedBox(
           width: 420,
           child: Column(
@@ -54,7 +94,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
         ),
         actions: [
           TextButton(
-            onPressed: () => Navigator.pop(context),
+            onPressed: () => Navigator.pop(ctx),
             child: const Text('Cancel'),
           ),
           ElevatedButton(
@@ -63,25 +103,27 @@ class _CategoryScreenState extends State<CategoryScreen> {
               if (n.isEmpty) return;
 
               bool ok;
-              if (id == null) {
-                ok = await context.read<CategoryProvider>().create(
+              final prov = context.read<CategoryProvider>();
+
+              if (existing == null) {
+                ok = await prov.create(
                   name: n,
-                  description: descCtrl.text,
+                  description: descCtrl.text.trim(),
                 );
               } else {
-                ok = await context.read<CategoryProvider>().update(
-                  id: id,
+                ok = await prov.update(
+                  id: existing.id,
                   name: n,
-                  description: descCtrl.text,
+                  description: descCtrl.text.trim(),
                 );
               }
 
               if (!context.mounted) return;
 
               if (ok) {
-                Navigator.pop(context);
+                Navigator.pop(ctx);
               } else {
-                final err = context.read<CategoryProvider>().error ?? 'Failed';
+                final err = prov.error ?? 'Failed';
                 ScaffoldMessenger.of(
                   context,
                 ).showSnackBar(SnackBar(content: Text(err)));
@@ -133,6 +175,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
                       child: Text(
                         prov.error!,
                         style: const TextStyle(color: Colors.red),
+                        overflow: TextOverflow.ellipsis,
                       ),
                     ),
                 ],
@@ -141,68 +184,60 @@ class _CategoryScreenState extends State<CategoryScreen> {
           ),
         ),
 
-        // LIST + PAGINATION BAR
         Expanded(
           child: prov.isLoading && prov.items.isEmpty
               ? const Loading()
               : Column(
                   children: [
                     Expanded(
-                      child: ListView.builder(
-                        itemCount: prov.items.length,
-                        itemBuilder: (_, i) {
-                          final c = prov.items[i];
-                          return Card(
-                            margin: const EdgeInsets.symmetric(
-                              horizontal: 12,
-                              vertical: 6,
-                            ),
-                            child: ListTile(
-                              title: Text(c.name),
-                              subtitle: Text(c.description ?? ''),
-                              trailing: Row(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  IconButton(
-                                    icon: const Icon(Icons.edit),
-                                    onPressed: () => _openDialog(
-                                      id: c.id,
-                                      name: c.name,
-                                      desc: c.description,
-                                    ),
-                                  ),
-                                  IconButton(
-                                    icon: const Icon(Icons.delete),
-                                    onPressed: () async {
-                                      final ok = await context
-                                          .read<CategoryProvider>()
-                                          .remove(c.id);
+                      child: RefreshIndicator(
+                        onRefresh: () => context.read<CategoryProvider>().fetch(
+                          search: _search.text.trim(),
+                          resetPage: true,
+                        ),
+                        child: ListView.builder(
+                          physics: const AlwaysScrollableScrollPhysics(),
+                          itemCount: prov.items.length,
+                          itemBuilder: (context, index) {
+                            final c = prov.items[index];
 
-                                      if (!context.mounted) return;
-
-                                      if (!ok) {
-                                        final err =
-                                            context
-                                                .read<CategoryProvider>()
-                                                .error ??
-                                            'Delete failed';
-                                        ScaffoldMessenger.of(
-                                          context,
-                                        ).showSnackBar(
-                                          SnackBar(content: Text(err)),
-                                        );
-                                      }
-                                    },
-                                  ),
-                                ],
+                            return Card(
+                              margin: const EdgeInsets.symmetric(
+                                horizontal: 12,
+                                vertical: 6,
                               ),
-                            ),
-                          );
-                        },
+                              child: ListTile(
+                                title: Text(c.name),
+                                subtitle: (c.description ?? '').trim().isEmpty
+                                    ? null
+                                    : Text(c.description ?? ''),
+                                trailing: Wrap(
+                                  spacing: 8,
+                                  children: [
+                                    IconButton(
+                                      tooltip: 'Edit',
+                                      icon: const Icon(Icons.edit),
+                                      onPressed: () => _openDialog(existing: c),
+                                    ),
+                                    IconButton(
+                                      tooltip: 'Delete',
+                                      icon: const Icon(
+                                        Icons.delete,
+                                        color: Colors.red,
+                                      ),
+                                      onPressed: () =>
+                                          _confirmDeleteCategory(c),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            );
+                          },
+                        ),
                       ),
                     ),
 
-                    // Pagination Bar
+                    // Pagination bar
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 12,
@@ -229,7 +264,6 @@ class _CategoryScreenState extends State<CategoryScreen> {
                           const SizedBox(width: 16),
                           Text(
                             'Page ${prov.page} / ${prov.totalPages}',
-
                             style: const TextStyle(fontWeight: FontWeight.w600),
                           ),
                           const SizedBox(width: 16),
