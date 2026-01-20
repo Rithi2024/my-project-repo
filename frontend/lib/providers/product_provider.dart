@@ -15,20 +15,24 @@ class ProductProvider extends ChangeNotifier {
   final ApiClient _api;
   final TokenStorage _tokenStorage = TokenStorage();
 
-  // Pagination / filter
+  // Paging / filter
   final int limit = 20;
   int page = 1;
+
+  int total = 0; // from backend paging.total
+  int get totalPages => (total <= 0) ? 1 : ((total + limit - 1) ~/ limit);
+
+  bool get hasPrev => page > 1;
+  bool get hasNext => page < totalPages;
 
   String search = '';
   int? categoryId;
 
   String sortBy = 'name'; // name | price
-  String order = 'asc'; // asc | desc  (✅ backend uses "order")
+  String order = 'asc'; // asc | desc
 
   // State
   bool isLoading = false;
-  bool isLoadingMore = false;
-  bool hasMore = true;
   String? error;
 
   List<Product> items = [];
@@ -39,26 +43,16 @@ class ProductProvider extends ChangeNotifier {
   }
 
   // ----------------------------
-  // LIST / PAGINATION
+  // LIST (BUTTON PAGINATION)
   // ----------------------------
 
-  Future<void> resetAndFetch() async {
-    page = 1;
-    hasMore = true;
-    items = [];
-    notifyListeners();
-    await fetchNextPage();
-  }
+  Future<void> fetch({int? pageOverride, bool resetPage = false}) async {
+    if (isLoading) return;
 
-  Future<void> fetchNextPage() async {
-    if (!hasMore) return;
-    if (isLoadingMore || isLoading) return;
+    if (resetPage) page = 1;
+    if (pageOverride != null) page = pageOverride;
 
-    if (page == 1) {
-      isLoading = true;
-    } else {
-      isLoadingMore = true;
-    }
+    isLoading = true;
     error = null;
     notifyListeners();
 
@@ -69,33 +63,42 @@ class ProductProvider extends ChangeNotifier {
         'sort_by': sortBy,
         'order': order,
       };
+
       if (search.trim().isNotEmpty) query['search'] = search.trim();
       if (categoryId != null) query['category_id'] = categoryId.toString();
 
-      // ✅ backend returns { paging: {...}, data: [...] }
+      // backend returns { paging: { total }, data: [...] }
       final res = await _api.get('/products', query: query);
 
       final list = (res['data'] as List).cast<dynamic>();
-      final total = (res['paging']['total'] as int);
+      final paging = (res['paging'] as Map<String, dynamic>);
+      total = (paging['total'] as int?) ?? 0;
 
-      final newItems = list
+      items = list
           .map((e) => Product.fromJson(e as Map<String, dynamic>))
           .toList();
 
-      items.addAll(newItems);
-
-      hasMore = items.length < total;
-      page += 1;
-
       isLoading = false;
-      isLoadingMore = false;
       notifyListeners();
     } catch (e) {
       isLoading = false;
-      isLoadingMore = false;
       error = _cleanError(e);
       notifyListeners();
     }
+  }
+
+  Future<void> resetAndFetch() async {
+    await fetch(resetPage: true);
+  }
+
+  Future<void> nextPage() async {
+    if (!hasNext) return;
+    await fetch(pageOverride: page + 1);
+  }
+
+  Future<void> prevPage() async {
+    if (!hasPrev) return;
+    await fetch(pageOverride: page - 1);
   }
 
   // ----------------------------
@@ -107,7 +110,7 @@ class ProductProvider extends ChangeNotifier {
     String? description,
     required int categoryId,
     required double price,
-    String? imageFilename, // filename only (e.g. "a.jpg")
+    String? imageFilename,
   }) async {
     error = null;
     notifyListeners();
@@ -128,7 +131,8 @@ class ProductProvider extends ChangeNotifier {
         },
       );
 
-      await resetAndFetch();
+      // common UX: go back to page 1 after create
+      await fetch(resetPage: true);
       return true;
     } catch (e) {
       error = _cleanError(e);
@@ -143,7 +147,7 @@ class ProductProvider extends ChangeNotifier {
     String? description,
     double? price,
     int? categoryId,
-    String? imageFilename, // filename only
+    String? imageFilename,
   }) async {
     error = null;
     notifyListeners();
@@ -167,7 +171,8 @@ class ProductProvider extends ChangeNotifier {
 
       await _api.put('/products/$id', body: body);
 
-      await resetAndFetch();
+      // stay on same page after update
+      await fetch(pageOverride: page);
       return true;
     } catch (e) {
       error = _cleanError(e);
@@ -180,7 +185,7 @@ class ProductProvider extends ChangeNotifier {
     error = null;
     notifyListeners();
 
-    // optimistic remove
+    // optimistic remove from current page list
     final idx = items.indexWhere((p) => p.id == id);
     Product? backup;
     if (idx != -1) {
@@ -190,6 +195,12 @@ class ProductProvider extends ChangeNotifier {
 
     try {
       await _api.delete('/products/$id');
+
+      // if page becomes empty after delete, go back one page
+      if (items.isEmpty && page > 1) {
+        page -= 1;
+      }
+      await fetch(pageOverride: page);
       return true;
     } catch (e) {
       if (backup != null && idx != -1) {
@@ -205,13 +216,6 @@ class ProductProvider extends ChangeNotifier {
   // ----------------------------
   // IMAGE UPLOAD
   // ----------------------------
-  // Backend endpoint: POST /api/uploads
-  // multipart field: "image"
-  // returns: { filename: "xxx.jpg" }
-  //
-  // After upload, pass filename to create/update as imageFilename.
-  // ----------------------------
-
   Future<String?> uploadImage(File file) async {
     error = null;
     notifyListeners();
@@ -220,7 +224,6 @@ class ProductProvider extends ChangeNotifier {
       final uri = Uri.parse('$API_BASE_URL/uploads');
       final request = http.MultipartRequest('POST', uri);
 
-      // If upload route is protected by JWT (optional)
       final token = await _tokenStorage.getToken();
       if (token != null && token.isNotEmpty) {
         request.headers['Authorization'] = 'Bearer $token';
@@ -266,12 +269,12 @@ class ProductProvider extends ChangeNotifier {
 
   void setCategory(int? id) {
     categoryId = id;
-    resetAndFetch();
+    fetch(resetPage: true);
   }
 
   void setSort({required String by, required String dir}) {
     sortBy = by;
     order = dir;
-    resetAndFetch();
+    fetch(resetPage: true);
   }
 }

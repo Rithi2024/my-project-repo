@@ -15,9 +15,28 @@ class CategoryProvider extends ChangeNotifier {
 
   String _lastSearch = '';
 
-  Future<void> fetch({String? search}) async {
+  int _page = 1;
+  final int _limit = 10;
+
+  int total = 0;
+  int totalPages = 1;
+
+  int get page => _page;
+  int get limit => _limit;
+
+  bool get hasPrev => _page > 1;
+  bool get hasNext => _page < totalPages;
+
+  Future<void> fetch({
+    String? search,
+    int? page,
+    bool resetPage = false,
+  }) async {
     final s = (search ?? _lastSearch).trim();
     _lastSearch = s;
+
+    if (resetPage) _page = 1;
+    if (page != null) _page = page;
 
     if (isLoading) return;
 
@@ -26,13 +45,17 @@ class CategoryProvider extends ChangeNotifier {
     notifyListeners();
 
     try {
-      final query = <String, String>{};
+      final query = <String, String>{'page': '$_page', 'limit': '$_limit'};
       if (s.isNotEmpty) query['search'] = s;
 
       final res = await _api.get('/categories', query: query);
 
-      // ✅ backend returns { data: [...] }
+      // ✅ backend returns { data: [...], paging: { total, totalPages }, page, limit }
       final list = (res['data'] as List).cast<dynamic>();
+      final paging = (res['paging'] as Map<String, dynamic>?);
+
+      total = (paging?['total'] as int?) ?? list.length;
+      totalPages = (paging?['totalPages'] as int?) ?? 1;
 
       final newItems = list
           .map((e) => Category.fromJson(e as Map<String, dynamic>))
@@ -51,6 +74,16 @@ class CategoryProvider extends ChangeNotifier {
     }
   }
 
+  Future<void> nextPage() async {
+    if (!hasNext) return;
+    await fetch(page: _page + 1);
+  }
+
+  Future<void> prevPage() async {
+    if (!hasPrev) return;
+    await fetch(page: _page - 1);
+  }
+
   Future<bool> create({required String name, String? description}) async {
     error = null;
     notifyListeners();
@@ -66,7 +99,7 @@ class CategoryProvider extends ChangeNotifier {
         },
       );
 
-      await fetch(search: _lastSearch);
+      await fetch(search: _lastSearch, resetPage: true);
       return true;
     } catch (e) {
       error = _cleanError(e);
@@ -94,7 +127,7 @@ class CategoryProvider extends ChangeNotifier {
         },
       );
 
-      await fetch(search: _lastSearch);
+      await fetch(search: _lastSearch, page: _page);
       return true;
     } catch (e) {
       error = _cleanError(e);
@@ -107,21 +140,24 @@ class CategoryProvider extends ChangeNotifier {
     error = null;
     notifyListeners();
 
-    // Optional: optimistic remove
-    final index = _items.indexWhere((c) => c.id == id);
-    Category? removed;
-    if (index != -1) {
-      removed = _items.removeAt(index);
+    final idx = _items.indexWhere((c) => c.id == id);
+    Category? backup;
+    if (idx != -1) {
+      backup = _items.removeAt(idx);
       notifyListeners();
     }
 
     try {
       await _api.delete('/categories/$id');
+
+      // if page becomes empty, go back a page
+      if (_items.isEmpty && _page > 1) _page -= 1;
+
+      await fetch(search: _lastSearch, page: _page);
       return true;
     } catch (e) {
-      // rollback if delete failed
-      if (removed != null) {
-        _items.insert(index, removed);
+      if (backup != null && idx != -1) {
+        _items.insert(idx, backup);
         notifyListeners();
       }
       error = _cleanError(e);
@@ -131,7 +167,6 @@ class CategoryProvider extends ChangeNotifier {
   }
 
   String _cleanError(Object e) {
-    // If your ApiClient throws ApiException(message), you can detect it
     final text = e.toString();
     return text.startsWith('ApiException')
         ? text.replaceFirst(RegExp(r'^ApiException\(\d+\):\s*'), '')

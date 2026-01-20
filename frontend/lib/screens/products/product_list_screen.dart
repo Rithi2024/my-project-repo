@@ -21,7 +21,6 @@ class ProductListScreen extends StatefulWidget {
 class _ProductListScreenState extends State<ProductListScreen> {
   final _search = TextEditingController();
   final _debouncer = Debouncer(milliseconds: 500);
-  final _scroll = ScrollController();
 
   @override
   void initState() {
@@ -31,20 +30,12 @@ class _ProductListScreenState extends State<ProductListScreen> {
       await context.read<CategoryProvider>().fetch();
       await context.read<ProductProvider>().resetAndFetch();
     });
-
-    _scroll.addListener(() {
-      final p = context.read<ProductProvider>();
-      if (_scroll.position.pixels >= _scroll.position.maxScrollExtent - 200) {
-        p.fetchNextPage();
-      }
-    });
   }
 
   @override
   void dispose() {
     _search.dispose();
     _debouncer.dispose();
-    _scroll.dispose();
     super.dispose();
   }
 
@@ -90,11 +81,22 @@ class _ProductListScreenState extends State<ProductListScreen> {
       text: product == null ? '' : product!.price.toString(),
     );
 
-    final cats = context.read<CategoryProvider>().items;
+    final catsRaw = context.read<CategoryProvider>().items;
+    final catsMap = <int, dynamic>{};
+    for (final c in catsRaw) {
+      catsMap[c.id] = c;
+    }
+    final cats = catsMap.values.toList();
+
     int? selectedCategoryId =
         product?.categoryId ?? (cats.isNotEmpty ? cats.first.id : null);
 
-    File? pickedImage; // local picked image (phone/pc)
+    if (selectedCategoryId != null &&
+        !cats.any((c) => c.id == selectedCategoryId)) {
+      selectedCategoryId = cats.isNotEmpty ? cats.first.id : null;
+    }
+
+    File? pickedImage;
 
     await showDialog(
       context: context,
@@ -155,8 +157,6 @@ class _ProductListScreenState extends State<ProductListScreen> {
                             setState(() => selectedCategoryId = v),
                       ),
                       const SizedBox(height: 12),
-
-                      // IMAGE PICK
                       Row(
                         children: [
                           ElevatedButton.icon(
@@ -180,8 +180,6 @@ class _ProductListScreenState extends State<ProductListScreen> {
                           ),
                         ],
                       ),
-
-                      // PREVIEW
                       if (pickedImage != null) ...[
                         const SizedBox(height: 10),
                         ClipRRect(
@@ -254,7 +252,6 @@ class _ProductListScreenState extends State<ProductListScreen> {
                       return;
                     }
 
-                    // upload image first (if selected)
                     String? filename;
                     if (pickedImage != null) {
                       filename = await context
@@ -290,7 +287,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                         description: descCtrl.text,
                         categoryId: cid,
                         price: price,
-                        imageFilename: filename, // only changes if picked
+                        imageFilename: filename,
                       );
                     }
 
@@ -322,6 +319,19 @@ class _ProductListScreenState extends State<ProductListScreen> {
     final catProv = context.watch<CategoryProvider>();
     final prodProv = context.watch<ProductProvider>();
 
+    // dedupe categories for dropdown
+    final catMap = <int, dynamic>{};
+    for (final c in catProv.items) {
+      catMap[c.id] = c;
+    }
+    final uniqueCats = catMap.values.toList();
+
+    int? safeCategoryId = prodProv.categoryId;
+    if (safeCategoryId != null &&
+        !uniqueCats.any((c) => c.id == safeCategoryId)) {
+      safeCategoryId = null;
+    }
+
     return Column(
       children: [
         Padding(
@@ -339,9 +349,9 @@ class _ProductListScreenState extends State<ProductListScreen> {
                       ),
                       onChanged: (v) {
                         prodProv.setSearch(v);
-                        _debouncer.run(
-                          () => context.read<ProductProvider>().resetAndFetch(),
-                        );
+                        _debouncer.run(() {
+                          context.read<ProductProvider>().resetAndFetch();
+                        });
                       },
                     ),
                   ),
@@ -358,7 +368,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                 children: [
                   Expanded(
                     child: DropdownButtonFormField<int?>(
-                      value: prodProv.categoryId,
+                      value: safeCategoryId,
                       decoration: const InputDecoration(
                         labelText: 'Category',
                         border: OutlineInputBorder(),
@@ -368,7 +378,7 @@ class _ProductListScreenState extends State<ProductListScreen> {
                           value: null,
                           child: Text('All Categories'),
                         ),
-                        ...catProv.items.map(
+                        ...uniqueCats.map(
                           (c) => DropdownMenuItem<int?>(
                             value: c.id,
                             child: Text(c.name),
@@ -431,96 +441,190 @@ class _ProductListScreenState extends State<ProductListScreen> {
         Expanded(
           child: prodProv.isLoading && prodProv.items.isEmpty
               ? const Loading()
-              : ListView.builder(
-                  controller: _scroll,
-                  itemCount:
-                      prodProv.items.length + (prodProv.isLoadingMore ? 1 : 0),
-                  itemBuilder: (context, index) {
-                    if (index >= prodProv.items.length) {
-                      return const Padding(
-                        padding: EdgeInsets.all(16),
-                        child: Center(child: CircularProgressIndicator()),
-                      );
-                    }
+              : Column(
+                  children: [
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: prodProv.items.length,
+                        itemBuilder: (context, index) {
+                          final p = prodProv.items[index];
 
-                    final p = prodProv.items[index];
-
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      child: ListTile(
-                        leading: SizedBox(
-                          width: 56,
-                          height: 56,
-                          child: ClipRRect(
-                            borderRadius: BorderRadius.circular(8),
-                            child: CachedNetworkImage(
-                              imageUrl: (p.imageUrl ?? '').trim(),
-                              fit: BoxFit.cover,
-                              placeholder: (_, __) => Image.asset(
-                                'assets/images/no_image.png',
-                                fit: BoxFit.cover,
-                              ),
-                              errorWidget: (_, __, ___) => Image.asset(
-                                'assets/images/no_image.png',
-                                fit: BoxFit.cover,
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            child: Padding(
+                              padding: const EdgeInsets.all(12),
+                              child: _ProductRow(
+                                product: p,
+                                onEdit: () => _openProductDialog(product: p),
+                                onDelete: () => _confirmDeleteProduct(p),
                               ),
                             ),
-                          ),
-                        ),
-                        title: Text(p.name),
-                        subtitle: Text(
-                          '${p.categoryName ?? ''}\n${p.description ?? ''}',
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
-                        ),
-                        trailing: SizedBox(
-                          width: 110,
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            crossAxisAlignment: CrossAxisAlignment.end,
-                            children: [
-                              Text(
-                                '\$${p.price.toStringAsFixed(2)}',
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                              ),
-                              const SizedBox(height: 4),
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.end,
-                                children: [
-                                  IconButton(
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints.tightFor(
-                                      width: 34,
-                                      height: 34,
-                                    ),
-                                    visualDensity: VisualDensity.compact,
-                                    icon: const Icon(Icons.edit, size: 18),
-                                    onPressed: () =>
-                                        _openProductDialog(product: p),
-                                  ),
-                                  IconButton(
-                                    padding: EdgeInsets.zero,
-                                    constraints: const BoxConstraints.tightFor(
-                                      width: 34,
-                                      height: 34,
-                                    ),
-                                    visualDensity: VisualDensity.compact,
-                                    icon: const Icon(Icons.delete, size: 18),
-                                    onPressed: () => _confirmDeleteProduct(p),
-                                  ),
-                                ],
-                              ),
-                            ],
-                          ),
+                          );
+                        },
+                      ),
+                    ),
+
+                    // pagination (keep your row or change to Wrap if needed)
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        border: Border(
+                          top: BorderSide(color: Colors.grey.withOpacity(0.25)),
                         ),
                       ),
-                    );
-                  },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: (prodProv.hasPrev && !prodProv.isLoading)
+                                ? () =>
+                                      context.read<ProductProvider>().prevPage()
+                                : null,
+                            icon: const Icon(Icons.arrow_back),
+                            label: const Text('Previous'),
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            'Page ${prodProv.page} / ${prodProv.totalPages}',
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 16),
+                          ElevatedButton.icon(
+                            onPressed: (prodProv.hasNext && !prodProv.isLoading)
+                                ? () =>
+                                      context.read<ProductProvider>().nextPage()
+                                : null,
+                            icon: const Icon(Icons.arrow_forward),
+                            label: const Text('Next'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
+        ),
+      ],
+    );
+  }
+}
+
+class _ProductRow extends StatelessWidget {
+  const _ProductRow({
+    required this.product,
+    required this.onEdit,
+    required this.onDelete,
+  });
+
+  final Product product;
+  final VoidCallback onEdit;
+  final VoidCallback onDelete;
+
+  @override
+  Widget build(BuildContext context) {
+    final w = MediaQuery.of(context).size.width;
+
+    // give trailing area enough width, but not too big on small screens
+    final trailingWidth = w < 380 ? 96.0 : 120.0;
+
+    return Row(
+      crossAxisAlignment: CrossAxisAlignment.start,
+      children: [
+        // image
+        SizedBox(
+          width: 56,
+          height: 56,
+          child: ClipRRect(
+            borderRadius: BorderRadius.circular(8),
+            child: CachedNetworkImage(
+              imageUrl: (product.imageUrl ?? '').trim(),
+              fit: BoxFit.cover,
+              placeholder: (_, __) =>
+                  Image.asset('assets/images/no_image.png', fit: BoxFit.cover),
+              errorWidget: (_, __, ___) =>
+                  Image.asset('assets/images/no_image.png', fit: BoxFit.cover),
+            ),
+          ),
+        ),
+        const SizedBox(width: 12),
+
+        // title/subtitle area
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(
+                product.name,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.titleMedium,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                product.categoryName ?? '',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+              const SizedBox(height: 2),
+              Text(
+                product.description ?? '',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium,
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(width: 10),
+
+        // trailing actions
+        SizedBox(
+          width: trailingWidth,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.end,
+            children: [
+              Text(
+                '\$${product.price.toStringAsFixed(2)}',
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+              ),
+              const SizedBox(height: 6),
+              Row(
+                mainAxisAlignment: MainAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 32,
+                      height: 32,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.edit, size: 18),
+                    onPressed: onEdit,
+                  ),
+                  IconButton(
+                    padding: EdgeInsets.zero,
+                    constraints: const BoxConstraints.tightFor(
+                      width: 32,
+                      height: 32,
+                    ),
+                    visualDensity: VisualDensity.compact,
+                    icon: const Icon(Icons.delete, size: 18),
+                    onPressed: onDelete,
+                  ),
+                ],
+              ),
+            ],
+          ),
         ),
       ],
     );

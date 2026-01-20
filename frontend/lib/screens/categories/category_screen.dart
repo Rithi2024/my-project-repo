@@ -77,6 +77,7 @@ class _CategoryScreenState extends State<CategoryScreen> {
               }
 
               if (!context.mounted) return;
+
               if (ok) {
                 Navigator.pop(context);
               } else {
@@ -110,9 +111,12 @@ class _CategoryScreenState extends State<CategoryScreen> {
                   border: OutlineInputBorder(),
                 ),
                 onChanged: (v) {
-                  _debouncer.run(
-                    () => context.read<CategoryProvider>().fetch(search: v),
-                  );
+                  _debouncer.run(() {
+                    context.read<CategoryProvider>().fetch(
+                      search: v,
+                      resetPage: true,
+                    );
+                  });
                 },
               ),
               const SizedBox(height: 10),
@@ -136,54 +140,112 @@ class _CategoryScreenState extends State<CategoryScreen> {
             ],
           ),
         ),
+
+        // LIST + PAGINATION BAR
         Expanded(
           child: prov.isLoading && prov.items.isEmpty
               ? const Loading()
-              : ListView.builder(
-                  itemCount: prov.items.length,
-                  itemBuilder: (_, i) {
-                    final c = prov.items[i];
-                    return Card(
-                      margin: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 6,
-                      ),
-                      child: ListTile(
-                        title: Text(c.name),
-                        subtitle: Text(c.description ?? ''),
-                        trailing: Row(
-                          mainAxisSize: MainAxisSize.min,
-                          children: [
-                            IconButton(
-                              icon: const Icon(Icons.edit),
-                              onPressed: () => _openDialog(
-                                id: c.id,
-                                name: c.name,
-                                desc: c.description,
+              : Column(
+                  children: [
+                    Expanded(
+                      child: ListView.builder(
+                        itemCount: prov.items.length,
+                        itemBuilder: (_, i) {
+                          final c = prov.items[i];
+                          return Card(
+                            margin: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                              vertical: 6,
+                            ),
+                            child: ListTile(
+                              title: Text(c.name),
+                              subtitle: Text(c.description ?? ''),
+                              trailing: Row(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  IconButton(
+                                    icon: const Icon(Icons.edit),
+                                    onPressed: () => _openDialog(
+                                      id: c.id,
+                                      name: c.name,
+                                      desc: c.description,
+                                    ),
+                                  ),
+                                  IconButton(
+                                    icon: const Icon(Icons.delete),
+                                    onPressed: () async {
+                                      final ok = await context
+                                          .read<CategoryProvider>()
+                                          .remove(c.id);
+
+                                      if (!context.mounted) return;
+
+                                      if (!ok) {
+                                        final err =
+                                            context
+                                                .read<CategoryProvider>()
+                                                .error ??
+                                            'Delete failed';
+                                        ScaffoldMessenger.of(
+                                          context,
+                                        ).showSnackBar(
+                                          SnackBar(content: Text(err)),
+                                        );
+                                      }
+                                    },
+                                  ),
+                                ],
                               ),
                             ),
-                            IconButton(
-                              icon: const Icon(Icons.delete),
-                              onPressed: () async {
-                                final ok = await context
-                                    .read<CategoryProvider>()
-                                    .remove(c.id);
-                                if (!context.mounted) return;
-                                if (!ok) {
-                                  final err =
-                                      context.read<CategoryProvider>().error ??
-                                      'Delete failed';
-                                  ScaffoldMessenger.of(
-                                    context,
-                                  ).showSnackBar(SnackBar(content: Text(err)));
-                                }
-                              },
-                            ),
-                          ],
+                          );
+                        },
+                      ),
+                    ),
+
+                    // Pagination Bar
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: Theme.of(context).cardColor,
+                        border: Border(
+                          top: BorderSide(color: Colors.grey.withOpacity(0.25)),
                         ),
                       ),
-                    );
-                  },
+                      child: Row(
+                        mainAxisAlignment: MainAxisAlignment.center,
+                        children: [
+                          ElevatedButton.icon(
+                            onPressed: (prov.hasPrev && !prov.isLoading)
+                                ? () => context
+                                      .read<CategoryProvider>()
+                                      .prevPage()
+                                : null,
+                            icon: const Icon(Icons.arrow_back),
+                            label: const Text('Previous'),
+                          ),
+                          const SizedBox(width: 16),
+                          Text(
+                            'Page ${prov.page} / ${prov.totalPages}',
+
+                            style: const TextStyle(fontWeight: FontWeight.w600),
+                          ),
+                          const SizedBox(width: 16),
+                          ElevatedButton.icon(
+                            onPressed: (prov.hasNext && !prov.isLoading)
+                                ? () => context
+                                      .read<CategoryProvider>()
+                                      .nextPage()
+                                : null,
+                            icon: const Icon(Icons.arrow_forward),
+                            label: const Text('Next'),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
                 ),
         ),
       ],

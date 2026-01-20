@@ -32,35 +32,64 @@ async function createCategory(req, res) {
   }
 }
 
-// GET /api/categories?search=abc
+// GET /api/categories?search=abc&page=1&limit=10
 async function getCategories(req, res) {
   try {
     const search = (req.query.search || "").trim();
+    const page = Math.max(parseInt(req.query.page || "1", 10) || 1, 1);
+    const limit = Math.max(parseInt(req.query.limit || "10", 10) || 10, 1);
+    const offset = (page - 1) * limit;
 
-    let result;
+    let totalResult;
+    let dataResult;
 
     if (search) {
-      // Khmer-safe LIKE search
-      result = await sql.query`
+      totalResult = await sql.query`
+        SELECT COUNT(1) AS total
+        FROM Categories
+        WHERE name COLLATE Khmer_100_CI_AI LIKE '%' + ${search} + '%'
+           OR description COLLATE Khmer_100_CI_AI LIKE '%' + ${search} + '%'
+      `;
+
+      dataResult = await sql.query`
         SELECT id, name, description, created_at
         FROM Categories
         WHERE name COLLATE Khmer_100_CI_AI LIKE '%' + ${search} + '%'
+           OR description COLLATE Khmer_100_CI_AI LIKE '%' + ${search} + '%'
         ORDER BY name COLLATE Khmer_100_CI_AI
+        OFFSET ${offset} ROWS
+        FETCH NEXT ${limit} ROWS ONLY
       `;
     } else {
-      result = await sql.query`
+      totalResult = await sql.query`
+        SELECT COUNT(1) AS total
+        FROM Categories
+      `;
+
+      dataResult = await sql.query`
         SELECT id, name, description, created_at
         FROM Categories
         ORDER BY name COLLATE Khmer_100_CI_AI
+        OFFSET ${offset} ROWS
+        FETCH NEXT ${limit} ROWS ONLY
       `;
     }
 
-    return res.json({ data: result.recordset });
+    const total = totalResult.recordset[0]?.total || 0;
+    const totalPages = Math.max(Math.ceil(total / limit), 1);
+
+    return res.json({
+      data: dataResult.recordset,
+      paging: { total, totalPages },
+      page,
+      limit,
+    });
   } catch (err) {
     console.error("getCategories error:", err);
     return res.status(500).json({ message: "Server error" });
   }
 }
+
 
 // PUT /api/categories/:id
 async function updateCategory(req, res) {
